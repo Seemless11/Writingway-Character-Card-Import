@@ -1,10 +1,9 @@
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QSplitter, QTreeWidget, QTreeWidgetItem, QTextEdit
-from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
-from compendium.compendium_manager import CompendiumManager
+from PyQt5.QtCore import Qt, pyqtSlot
+from compendium.compendium_manager import CompendiumManager, CompendiumEventBus
 from settings.selection_manager import SelectionManager
 
 class ContextPanel(QWidget):
-    compendium_updated = pyqtSignal(str)  # str is the project_name
     """
     A panel that lets the user choose extra context for the prose prompt.
     It now displays two panels side-by-side:
@@ -12,21 +11,21 @@ class ContextPanel(QWidget):
       - Compendium: shows compendium entries organized by category.
     Selections persist until manually changed.
     """
-
     def __init__(self, project_structure, project_name, parent, enhanced_window=None):
         super().__init__(parent)
         self.project_structure = project_structure
         self.project_name = project_name
         self.controller = parent
-        self.compendium_manager = CompendiumManager(project_name)
+        self.event_bus = CompendiumEventBus.get_instance()
+        self.compendium_manager = CompendiumManager(project_name, event_bus=self.event_bus)
         self.selection_manager = SelectionManager(project_name, parent.metaObject().className())
         self.enhanced_window = enhanced_window
-        self.uuid_map = {}  # Map UUIDs to QTreeWidgetItems
+        self.uuid_map = {}
         self._building_tree = False
         self.init_ui()
         if hasattr(self.controller, "model") and self.controller.model:
             self.controller.model.structureChanged.connect(self.on_structure_changed)
-        self.connect_to_compendium_signal()
+        self.event_bus.add_updated_listener(self.update_compendium_tree)
 
     def init_ui(self):
         layout = QHBoxLayout(self)
@@ -124,7 +123,6 @@ class ContextPanel(QWidget):
                 entry_name = entry.get("name", "Unnamed Entry")
                 entry_item = QTreeWidgetItem(cat_item, [entry_name])
                 entry_item.setFlags(entry_item.flags() | Qt.ItemIsUserCheckable)
-                # Restore check state using item path
                 item_path = f"{cat_name}/{entry_name}"
                 entry_item.setCheckState(0, Qt.Checked if self.selection_manager.is_checked(item_path) else Qt.Unchecked)
                 entry_item.setData(
@@ -139,7 +137,6 @@ class ContextPanel(QWidget):
             return
         item_type = selected_item_info["type"]
         item_name = selected_item_info["name"]
-
         if item_type == "category":
             for i in range(self.compendium_tree.topLevelItemCount()):
                 cat_item = self.compendium_tree.topLevelItem(i)
@@ -235,6 +232,62 @@ class ContextPanel(QWidget):
             self._traverse_project_item(root.child(i), texts, temp_editor)
         return "\n\n".join(texts) if texts else ""
 
+    def get_selections(self):
+        """Returns current UI state as (project_uuids, compendium_paths)."""
+        project_uuids = []
+        for uuid, item in self.uuid_map.items():
+            if item.checkState(0) == Qt.Checked:
+                project_uuids.append(uuid)
+        
+        compendium_paths = []
+        root = self.compendium_tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            cat_item = root.child(i)
+            for j in range(cat_item.childCount()):
+                entry_item = cat_item.child(j)
+                if entry_item.checkState(0) == Qt.Checked:
+                    compendium_paths.append(f"{cat_item.text(0)}/{entry_item.text(0)}")
+        return project_uuids, compendium_paths
+
+    def set_selections(self, project_uuids, compendium_paths, mandatory_compendium_paths=None):
+        """
+        Updates the UI state. 
+        mandatory_compendium_paths: list of "Category/Name" strings to lock.
+        """
+        self._building_tree = True # Use existing flag to block internal signals
+        mandatory = mandatory_compendium_paths or []
+
+        # 1. Update Project Tree
+        for uuid, item in self.uuid_map.items():
+            if item.flags() & Qt.ItemIsUserCheckable:
+                state = Qt.Checked if uuid in project_uuids else Qt.Unchecked
+                item.setCheckState(0, state)
+
+        # 2. Update Compendium Tree
+        root = self.compendium_tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            cat_item = root.child(i)
+            cat_name = cat_item.text(0)
+            for j in range(cat_item.childCount()):
+                entry_item = cat_item.child(j)
+                path = f"{cat_name}/{entry_item.text(0)}"
+                
+                if path in mandatory:
+                    entry_item.setCheckState(0, Qt.Checked)
+                    entry_item.setFlags(entry_item.flags() & ~Qt.ItemIsEnabled)
+                    font = entry_item.font(0)
+                    font.setBold(True)
+                    entry_item.setFont(0, font)
+                else:
+                    state = Qt.Checked if path in compendium_paths else Qt.Unchecked
+                    entry_item.setCheckState(0, state)
+                    entry_item.setFlags(entry_item.flags() | Qt.ItemIsEnabled)
+                    font = entry_item.font(0)
+                    font.setBold(False)
+                    entry_item.setFont(0, font)
+        
+        self._building_tree = False
+        
     def _load_content(self, data_type, data, hierarchy):
         """Helper method to load content consistently for summaries and scenes."""
         if data_type == "summary":
@@ -248,11 +301,11 @@ class ContextPanel(QWidget):
     def _traverse_project_item(self, item, texts, temp_editor):
         data = item.data(0, Qt.UserRole)
         hierarchy = self.controller.get_item_hierarchy(item)
-        
+
         if data and item.checkState(0) == Qt.Checked:
             content_type = data.get("type")
             content = self._load_content(content_type, data.get("data"), hierarchy)
-            
+
             if content:
                 temp_editor.setHtml(content)
                 content_text = temp_editor.toPlainText()
@@ -260,7 +313,7 @@ class ContextPanel(QWidget):
                     texts.append(f"[Summary - {item.parent().text(0)}]:\n{content_text}")
                 elif content_type == "scene":
                     texts.append(f"[Scene Content - {item.text(0)}]:\n{content_text}")
-        
+
         for i in range(item.childCount()):
             self._traverse_project_item(item.child(i), texts, temp_editor)
 
@@ -319,12 +372,6 @@ class ContextPanel(QWidget):
             font.setBold(True)
             summary_item.setFont(0, font)
 
-    def connect_to_compendium_signal(self):
-        """Connect to the EnhancedCompendiumWindow's compendium_updated signal."""
-        if self.enhanced_window:
-            self.enhanced_window.compendium_updated.connect(self.update_compendium_tree)
-    
-    @pyqtSlot(str)
     def update_compendium_tree(self, project_name):
         """Update the compendium tree if the project name matches."""
         if project_name == self.project_name and self.isVisible():
