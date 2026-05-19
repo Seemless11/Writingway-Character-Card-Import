@@ -30,8 +30,6 @@ class POVComboBox(QComboBox):
     def populate_combo(self) -> None:
         self.clear()
         characters = self.compendium.get_characters()
-        if not characters:
-            characters = ["Alice", "Bob", "Charlie"]
         characters.append(_("Custom..."))
         self.addItems(characters)
         self.currentIndexChanged.connect(self.handle_pov_character_change)
@@ -92,6 +90,10 @@ class POVComboBox(QComboBox):
             value = self.currentText()
             if (value and value != _("Custom...")):
                 self.selected_pov = value 
+            else: # User Canceled custom char
+                self.blockSignals(True)
+                self.setCurrentIndex(0)
+                self.blockSignals(False)
 
     def add_character_to_compendium(self, name, description):
         try:

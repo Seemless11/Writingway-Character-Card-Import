@@ -7,6 +7,7 @@ class ConversationManager:
         self.file_path = file_path
         self.conversations = {}
         self.last_viewed_chat = None
+        self.project_names = []  # Will be populated from workbench
         self.load()
 
     def load(self):
@@ -32,7 +33,11 @@ class ConversationManager:
             self._initialize_default()
 
     def _load_v1_format(self, data):
-        self.conversations = data.get("conversations", {})
+        self.conversations = {}
+        for name, conv in data.get("conversations", {}).items():
+            self.conversations[name] = self._normalize_conversation(conv)
+        
+        # self.conversations = data.get("conversations", {})
         self.last_viewed_chat = data.get("last_viewed_chat", "Chat 1")
         # Normalize all messages to ensure 'preserve' key exists
         for conv in self.conversations.values():
@@ -41,6 +46,25 @@ class ConversationManager:
             if "pov_character" not in conv:
                 conv["pov_character"] = None
     
+    # In _load_v1_format and _initialize_default etc.
+    def _normalize_conversation(self, conv_data, default_project=None):
+        if isinstance(conv_data, list):  # legacy
+            return {
+                "mode": "Writing Coach", 
+                "messages": conv_data, 
+                "pov_character": None, 
+                "project_name": default_project
+            }
+        
+        if not isinstance(conv_data, dict):
+            conv_data = {}
+            
+        conv_data.setdefault("mode", "Writing Coach")
+        conv_data.setdefault("messages", [])
+        conv_data.setdefault("pov_character", None)
+        conv_data.setdefault("project_name", default_project)
+        return conv_data
+
     def _normalize_messages(self, messages):
         """Ensure messages are in clean dict format."""
         normalized = []
@@ -82,10 +106,15 @@ class ConversationManager:
         except Exception as e:
             logging.error(f"Error saving conversations: {e}", exc_info=True)
 
-    def add_conversation(self, name, mode, pov_character=None):
+    def add_conversation(self, name, mode, pov_character=None, project_name=None):
         if name in self.conversations:
             raise ValueError(f"Conversation '{name}' already exists")
-        self.conversations[name] = {"mode": mode, "messages": [], "pov_character": pov_character}
+        self.conversations[name] = {
+            "mode": mode, 
+            "messages": [], 
+            "pov_character": pov_character,
+            "project_name": project_name or self._get_current_project_name()
+        }
         self.last_viewed_chat = name
 
     def rename_conversation(self, old_name, new_name):
@@ -108,8 +137,13 @@ class ConversationManager:
         return list(self.conversations.keys())
 
     def get_conversation(self, name):
-        return self.conversations.get(name, {"mode": "Writing Coach", "messages": [], "pov_character": None})
+        conv = self.conversations.get(name, {})
+        return self._normalize_conversation(conv)
 
+    def _get_current_project_name(self):
+        # For now fallback; better to pass it in
+        return getattr(self, '_current_project', None)
+    
     def update_messages(self, name, messages):
         if name in self.conversations:
             self.conversations[name]["messages"] = messages
@@ -138,3 +172,12 @@ class ConversationManager:
         conv = self.get_conversation(name)
         # Default to empty lists if not present
         return conv.get("context_selections", {"project": [], "compendium": []})
+    
+    def set_available_projects(self, project_names):
+        self.project_names = project_names
+    
+    def update_project_for_conversation(self, name: str, project_name: str):
+        """One-time assignment for legacy chats."""
+        if name in self.conversations:
+            self.conversations[name]["project_name"] = project_name
+            self.save()
