@@ -64,6 +64,10 @@ class NewChatDialog(QDialog):
 
     def update_pov_enabled(self, checked):
         self.pov_combo.setEnabled(checked)
+        if checked and self.pov_combo.count() == 1:
+            self.pov_combo.handle_pov_character_change() # force user to create a character
+            if self.pov_combo.count() == 1: # user canceled without creating a character
+                self.writing_coach_radio.toggle()
 
     def set_default_name(self):
         names = self.parent().controller.model.conversation_manager.get_conversation_names()

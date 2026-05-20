@@ -10,6 +10,7 @@ from .rag_pdf import PdfRagApp
 from .chat_session import WritingCoachSession, RolePlaySession
 from .workshop_model import WorkshopModel
 from .workshop_view import WorkshopView
+from .project_context_provider import ProjectContextProvider
 from .audio_utils import AudioRecorder, TranscriptionWorker
 
 class WorkshopController:
@@ -61,32 +62,52 @@ class WorkshopController:
             self.save_context_to_manager(self._current_chat_name)
         
         name = self.view.get_selected_conversation()
-        if name:
-            self._current_chat_name = name # Track current name for lifecycle
-            conv = self.model.conversation_manager.get_conversation(name)
-            selections = self.model.conversation_manager.get_context_selections(name)
+        if not name:
+            return
+        
+        self._current_chat_name = name # Track current name for lifecycle
+        conv = self.model.conversation_manager.get_conversation(name)
+        chat_project = conv.get("project_name")
+        
+        # === TEMPORARILY LOAD THE CHAT SO USER CAN SEE IT ===
+        self.current_session = self.create_session(conv["mode"], conv["messages"])
+        self.update_chat_log("Coach")  # Temporary display with default speaker
+        
+        # Project might have been renamed or deleted
+        if not chat_project or chat_project not in self.model.conversation_manager.project_names:
+            chat_project = self._prompt_for_project_association(name)
+            if not chat_project:
+                # User cancelled → fallback to current project
+                chat_project = self.model.project_name
+        
+        # Switch ContextPanel if needed
+        if chat_project != self.view.context_panel.project_name:
+            structure = self.model.load_project_structure(chat_project)
+            provider = ProjectContextProvider(chat_project)   # ← Clean injection
+            self.view.context_panel.switch_to_project(chat_project, structure=structure, context_provider=provider)
             
-            # Determine mandatory items (POV Character)
-            mandatory = []
-            self.char_name = "Coach"
-            if conv.get("mode") == "Role Play" and conv.get("pov_character"):
-                # Note: This assumes we can find which category the character is in, 
-                # or we store the full path. If POV is just a name, we find the first match.
-                self.char_name = conv["pov_character"]
-                mandatory = self._find_compendium_path_by_name(self.char_name)
+        selections = self.model.conversation_manager.get_context_selections(name)
+        
+        # Determine mandatory items (POV Character)
+        mandatory = []
+        self.char_name = "Coach"
+        if conv.get("mode") == "Role Play" and conv.get("pov_character"):
+            # Note: This assumes we can find which category the character is in, 
+            # or we store the full path. If POV is just a name, we find the first match.
+            self.char_name = conv["pov_character"]
+            mandatory = self._find_compendium_path_by_name(self.char_name)
 
-            self.view.context_panel.set_selections(
-                selections["project"], 
-                selections["compendium"],
-                mandatory_compendium_paths=mandatory
-            )
+        self.view.context_panel.set_selections(
+            selections["project"], 
+            selections["compendium"],
+            mandatory_compendium_paths=mandatory
+        )
 
-            self.current_session = self.create_session(conv["mode"], conv["messages"])
-            self.model.conversation_manager.set_last_viewed(name)
-            self.update_chat_log(self.char_name)
-            category = "Roleplay" if conv["mode"] == "Role Play" else "Workshop"
-            self.view.prompt_panel.set_category(category)
-            self.model.conversation_manager.save()
+        self.model.conversation_manager.set_last_viewed(name)
+        self.update_chat_log(self.char_name)
+        category = "Roleplay" if conv["mode"] == "Role Play" else "Workshop"
+        self.view.prompt_panel.set_category(category)
+        self.model.conversation_manager.save()
 
     def save_context_to_manager(self, chat_name):
         """Helper to pull state from UI into the data manager."""
@@ -97,6 +118,9 @@ class WorkshopController:
 
     def _find_compendium_path_by_name(self, name):
         """Helper to turn a POV character name into a 'Category/Name' path."""
+        if not self.view or not self.view.context_panel:
+            return []
+    
         root = self.view.context_panel.compendium_tree.invisibleRootItem()
         for i in range(root.childCount()):
             cat_item = root.child(i)
@@ -114,6 +138,8 @@ class WorkshopController:
 
     def update_chat_log(self, char_name="Coach"):
         self.view.clear_chat_log()
+        if not self.current_session:
+            return
         messages = self.current_session.messages
         n = len(messages)
         
@@ -138,7 +164,8 @@ class WorkshopController:
         mode, name, pov = self.view.show_new_chat_dialog()
         if mode and name:
             try:
-                self.model.conversation_manager.add_conversation(name, mode, pov)
+                # Assume Project is always the one where Workshop was launched from
+                self.model.conversation_manager.add_conversation(name, mode, pov, project_name=self.model.project_name)
                 icon_path = self.model.conversation_manager.get_icon_path(mode)
                 self.view.add_conversation_item(name, icon_path)
                 self.view.set_current_conversation_item(name)
@@ -454,3 +481,24 @@ class WorkshopController:
         self.model.conversation_manager.save()
         self.view.write_settings()
         event.accept()
+        
+    def _prompt_for_project_association(self, chat_name: str):
+        """Ask user which project this chat belongs to (one-time)."""
+        projects = self.model.conversation_manager.project_names or [self.model.project_name]
+        
+        if len(projects) <= 1:
+            project = projects[0]
+        else:
+            from PyQt5.QtWidgets import QInputDialog
+            project, ok = QInputDialog.getItem(
+                self.view, 
+                _("Associate Chat with Project"),
+                f"Chat '{chat_name}' has no associated project.\n"
+                "Please select the project this conversation belongs to:",
+                projects, 0, False
+            )
+            if not ok:
+                return None
+
+        self.model.conversation_manager.update_project_for_conversation(chat_name, project)
+        return project

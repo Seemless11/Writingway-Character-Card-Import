@@ -11,7 +11,7 @@ class ContextPanel(QWidget):
       - Compendium: shows compendium entries organized by category.
     Selections persist until manually changed.
     """
-    def __init__(self, project_structure, project_name, parent, enhanced_window=None):
+    def __init__(self, project_structure, project_name, parent, enhanced_window=None, context_provider=None):
         super().__init__(parent)
         self.project_structure = project_structure
         self.project_name = project_name
@@ -20,6 +20,7 @@ class ContextPanel(QWidget):
         self.compendium_manager = CompendiumManager(project_name, event_bus=self.event_bus)
         self.selection_manager = SelectionManager(project_name, parent.metaObject().className())
         self.enhanced_window = enhanced_window
+        self.context_provider = context_provider
         self.uuid_map = {}
         self._building_tree = False
         self.init_ui()
@@ -249,6 +250,25 @@ class ContextPanel(QWidget):
                     compendium_paths.append(f"{cat_item.text(0)}/{entry_item.text(0)}")
         return project_uuids, compendium_paths
 
+    def switch_to_project(self, project_name: str, structure=None, context_provider=None):
+        """Switch the panel to another project's data."""
+        if project_name == getattr(self, 'project_name', None):
+            return False
+
+        self.project_name = project_name
+        self.project_structure = structure or {}
+        
+        if context_provider:
+            self.context_provider = context_provider
+            
+        # Reinitialize managers for the new project
+        self.compendium_manager = CompendiumManager(project_name, event_bus=self.event_bus)
+        self.selection_manager = SelectionManager(project_name, self.__class__.__name__)
+        
+        self.build_project_tree()
+        self.build_compendium_tree()
+        return True
+    
     def set_selections(self, project_uuids, compendium_paths, mandatory_compendium_paths=None):
         """
         Updates the UI state. 
@@ -304,7 +324,14 @@ class ContextPanel(QWidget):
 
         if data and item.checkState(0) == Qt.Checked:
             content_type = data.get("type")
-            content = self._load_content(content_type, data.get("data"), hierarchy)
+            content = None
+
+            if content_type == "summary":
+                content = self._load_content(content_type, data.get("data"), hierarchy)
+            elif content_type == "scene" and self.context_provider:
+                content = self.context_provider.get_scene_content(hierarchy)
+            elif content_type == "scene":
+                content = self._load_content(content_type, data.get("data"), hierarchy)
 
             if content:
                 temp_editor.setHtml(content)
@@ -312,11 +339,20 @@ class ContextPanel(QWidget):
                 if content_type == "summary":
                     texts.append(f"[Summary - {item.parent().text(0)}]:\n{content_text}")
                 elif content_type == "scene":
-                    texts.append(f"[Scene Content - {item.text(0)}]:\n{content_text}")
+                    texts.append(f"[Scene - {item.text(0)}]:\n{content_text}")
 
         for i in range(item.childCount()):
             self._traverse_project_item(item.child(i), texts, temp_editor)
 
+    def _get_item_hierarchy(self, item):
+        """Generic helper to build hierarchy from tree item."""
+        hierarchy = []
+        current = item
+        while current:
+            hierarchy.insert(0, current.text(0).strip())
+            current = current.parent()
+        return hierarchy
+    
     def on_structure_changed(self, hierarchy, uuid):
         """Handle structure changes by updating the project tree."""
         if self.isHidden():
