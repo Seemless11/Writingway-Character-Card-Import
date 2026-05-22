@@ -21,6 +21,7 @@ pyaudio
 openai-whisper
 pydub
 moviepy
+imageio
 internetarchive
 PyMuPDF~=1.25.5
 pymupdf4llm~=0.0.22
