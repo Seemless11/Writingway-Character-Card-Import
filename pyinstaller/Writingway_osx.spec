@@ -23,8 +23,27 @@ datas = [
 
 binaries = []
 hiddenimports = ['tiktoken_ext.openai_public', 'tiktoken_ext', 'pyaudio']
-tmp_ret = collect_all('cmudict')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+# wrap collect_all to make it log what it did
+def _collect_all(pkg):
+    """Run collect_all and merge results into datas/binaries/hiddenimports."""
+    global datas, binaries, hiddenimports
+    try:
+        pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(pkg)
+        datas += pkg_datas
+        binaries += pkg_binaries
+        hiddenimports += pkg_hiddenimports
+        print(f"collect_all({pkg!r}): "
+              f"{len(pkg_datas)} datas, "
+              f"{len(pkg_binaries)} binaries, "
+              f"{len(pkg_hiddenimports)} hiddenimports")
+    except Exception as e:
+        print(f"collect_all({pkg!r}) skipped: {e}")
+
+# Do a collect_all (which does a copy_metadata internally) for the packages below.
+_collect_all('cmudict') # cmudict ships data files that must be bundled
+_collect_all('imageio')
+_collect_all('langchain_ollama')
 
 a = Analysis(
     ['../main.py'],
