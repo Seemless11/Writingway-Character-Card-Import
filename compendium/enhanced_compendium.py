@@ -790,7 +790,7 @@ class EnhancedCompendiumWindow(QMainWindow):
 
     def add_image(self):
         """Add an image to the current entry."""
-        file_name, _ = QFileDialog.getOpenFileName(self, _("Select Image"), "", _("Images (*.png *.jpg *.jpeg *.bmp)"))
+        file_name, _unused = QFileDialog.getOpenFileName(self, _("Select Image"), "", _("Images (*.png *.jpg *.jpeg *.bmp)"))
         if file_name and hasattr(self, 'current_entry'):
             pixmap = QPixmap(file_name)
             if not pixmap.isNull():
