@@ -304,6 +304,7 @@ class ProjectTreeWidget(QWidget):
         target    = self._drop_target
         drag_item = self._drag_item
         previous_item = self.tree.currentItem()
+        moved_subtree_states = self._capture_subtree_expanded_states(drag_item)
         self._dnd_reset()
 
         if target is None or drag_item is None:
@@ -331,6 +332,9 @@ class ProjectTreeWidget(QWidget):
             self.tree.insertTopLevelItem(insert_index, drag_item)
         else:
             parent.insertChild(insert_index, drag_item)
+
+        # Keep expand/collapse state of the moved branch stable after reparenting.
+        self._apply_subtree_expanded_states(drag_item, moved_subtree_states)
 
         # Persist and notify
         self.model.update_structure(self.tree)
@@ -693,17 +697,56 @@ class ProjectTreeWidget(QWidget):
             current = found
         return current
 
+    def _capture_subtree_expanded_states(self, root_item):
+        """Capture expanded/collapsed state for expandable items in a subtree by UUID."""
+        if root_item is None:
+            return {}
+
+        states = {}
+
+        def walk(item):
+            if item.childCount() > 0:
+                data = item.data(0, Qt.ItemDataRole.UserRole) or {}
+                uuid_val = data.get("uuid")
+                if uuid_val:
+                    states[uuid_val] = item.isExpanded()
+                for i in range(item.childCount()):
+                    walk(item.child(i))
+
+        walk(root_item)
+        return states
+
+    def _apply_subtree_expanded_states(self, root_item, states):
+        """Restore expanded/collapsed state for a subtree captured by UUID."""
+        if root_item is None or not states:
+            return
+
+        def walk(item):
+            if item.childCount() > 0:
+                data = item.data(0, Qt.ItemDataRole.UserRole) or {}
+                uuid_val = data.get("uuid")
+                if uuid_val in states:
+                    item.setExpanded(states[uuid_val])
+                for i in range(item.childCount()):
+                    walk(item.child(i))
+
+        walk(root_item)
+
     def _save_expanded_states(self):
-        """Save the expanded/collapsed state of ALL acts and chapters."""
+        """Save expanded/collapsed state for all expandable nodes using stable keys."""
         expanded = set()
 
         def collect_expanded(item, hierarchy=()):
             if item.childCount() == 0:
                 return
 
+            data = item.data(0, Qt.ItemDataRole.UserRole) or {}
+            uuid_val = data.get("uuid")
+            key = ("uuid", uuid_val) if uuid_val else ("path", hierarchy)
+
             # Save state for this item
             if item.isExpanded():
-                expanded.add(hierarchy)
+                expanded.add(key)
             # else: collapsed - we just don't add it
 
             # Always recurse to capture nested states
@@ -715,16 +758,21 @@ class ProjectTreeWidget(QWidget):
         root = self.tree.invisibleRootItem()
         for i in range(root.childCount()):
             act = root.child(i)
+            assert act is not None
             act_hierarchy = (act.text(0),)
             collect_expanded(act, act_hierarchy)
 
         return expanded
 
     def _restore_expanded_states(self, expanded_hierarchies):
-        """Restore all expanded/collapsed states."""
+        """Restore expanded/collapsed state previously captured by _save_expanded_states."""
         def restore_recursively(item, hierarchy=()):
+            data = item.data(0, Qt.ItemDataRole.UserRole) or {}
+            uuid_val = data.get("uuid")
+            key = ("uuid", uuid_val) if uuid_val else ("path", hierarchy)
+
             # Explicitly set expanded or collapsed
-            if hierarchy in expanded_hierarchies:
+            if key in expanded_hierarchies:
                 item.setExpanded(True)
             else:
                 item.setExpanded(False)
@@ -738,6 +786,7 @@ class ProjectTreeWidget(QWidget):
         root = self.tree.invisibleRootItem()
         for i in range(root.childCount()):
             act = root.child(i)
+            assert act is not None
             act_hierarchy = (act.text(0),)
             restore_recursively(act, act_hierarchy)
             
