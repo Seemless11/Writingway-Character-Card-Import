@@ -62,6 +62,7 @@ class ProjectTreeWidget(QWidget):
     _DND_SCROLL_MARGIN  = 30  # px from edge of viewport that triggers auto-scroll
     _DND_SCROLL_SPEED   = 10  # px per timer tick
     _DND_SCROLL_INTERVAL = 50  # ms
+    _DND_EXTRA_DROP_ROWS = 1  # allow ~1 extra row of empty bottom drag space
 
     def __init__(self, controller, model):
         super().__init__()
@@ -303,6 +304,7 @@ class ProjectTreeWidget(QWidget):
         target    = self._drop_target
         drag_item = self._drag_item
         previous_item = self.tree.currentItem()
+        moved_subtree_states = self._capture_subtree_expanded_states(drag_item)
         self._dnd_reset()
 
         if target is None or drag_item is None:
@@ -331,6 +333,9 @@ class ProjectTreeWidget(QWidget):
         else:
             parent.insertChild(insert_index, drag_item)
 
+        # Keep expand/collapse state of the moved branch stable after reparenting.
+        self._apply_subtree_expanded_states(drag_item, moved_subtree_states)
+
         # Persist and notify
         self.model.update_structure(self.tree)
         hierarchy = self.controller.get_item_hierarchy(drag_item)
@@ -353,14 +358,28 @@ class ProjectTreeWidget(QWidget):
             return item
         return self._dnd_last_visible(item.child(item.childCount() - 1))
 
+    def _dnd_row_height(self):
+        """Best-effort row height for drag hit-testing around empty viewport areas."""
+        first = self.tree.topLevelItem(0)
+        if first is not None:
+            rect = self.tree.visualItemRect(first)
+            if rect.isValid() and rect.height() > 0:
+                return rect.height()
+
+        hint = self.tree.sizeHintForRow(0)
+        if hint > 0:
+            return hint
+
+        return max(16, self.tree.fontMetrics().height() + 8)
+
     def _dnd_item_at_or_near(self, pos):
         """Return the tree item at *pos*, or the nearest one just above it."""
         item = self.tree.itemAt(pos)
         if item:
             return item
         rh = self._dnd_row_height()
-        # Search upward within ~1 row height of empty space.
-        for dy in range(1, rh + 4):
+        # Search upward within a small extra bottom drop zone.
+        for dy in range(1, self._DND_EXTRA_DROP_ROWS * rh + 4):
             item = self.tree.itemAt(QPoint(pos.x(), pos.y() - dy))
             if item:
                 return item
@@ -451,6 +470,22 @@ class ProjectTreeWidget(QWidget):
                     line_x       = self.tree.visualItemRect(act_item.child(0)).left()
                 else:
                     return None   # Collapsed non-empty act
+            elif level == 2:
+                ch_item = item.parent()
+                if ch_item is None:
+                    return None
+                # Allow dropping below scenes only at the end of a chapter,
+                # which maps to inserting after that chapter in its act.
+                if item is self._dnd_last_visible(ch_item) and not upper_half:
+                    act_item = ch_item.parent()
+                    if act_item is None:
+                        return None
+                    parent = act_item
+                    insert_index = act_item.indexOfChild(ch_item) + 1
+                    line_y = rect.bottom()
+                    line_x = self.tree.visualItemRect(ch_item).left()
+                else:
+                    return None
             else:
                 return None   # Scene level – invalid for chapter drag
 
@@ -662,17 +697,56 @@ class ProjectTreeWidget(QWidget):
             current = found
         return current
 
+    def _capture_subtree_expanded_states(self, root_item):
+        """Capture expanded/collapsed state for expandable items in a subtree by UUID."""
+        if root_item is None:
+            return {}
+
+        states = {}
+
+        def walk(item):
+            if item.childCount() > 0:
+                data = item.data(0, Qt.ItemDataRole.UserRole) or {}
+                uuid_val = data.get("uuid")
+                if uuid_val:
+                    states[uuid_val] = item.isExpanded()
+                for i in range(item.childCount()):
+                    walk(item.child(i))
+
+        walk(root_item)
+        return states
+
+    def _apply_subtree_expanded_states(self, root_item, states):
+        """Restore expanded/collapsed state for a subtree captured by UUID."""
+        if root_item is None or not states:
+            return
+
+        def walk(item):
+            if item.childCount() > 0:
+                data = item.data(0, Qt.ItemDataRole.UserRole) or {}
+                uuid_val = data.get("uuid")
+                if uuid_val in states:
+                    item.setExpanded(states[uuid_val])
+                for i in range(item.childCount()):
+                    walk(item.child(i))
+
+        walk(root_item)
+
     def _save_expanded_states(self):
-        """Save the expanded/collapsed state of ALL acts and chapters."""
+        """Save expanded/collapsed state for all expandable nodes using stable keys."""
         expanded = set()
 
         def collect_expanded(item, hierarchy=()):
             if item.childCount() == 0:
                 return
 
+            data = item.data(0, Qt.ItemDataRole.UserRole) or {}
+            uuid_val = data.get("uuid")
+            key = ("uuid", uuid_val) if uuid_val else ("path", hierarchy)
+
             # Save state for this item
             if item.isExpanded():
-                expanded.add(hierarchy)
+                expanded.add(key)
             # else: collapsed - we just don't add it
 
             # Always recurse to capture nested states
@@ -684,16 +758,21 @@ class ProjectTreeWidget(QWidget):
         root = self.tree.invisibleRootItem()
         for i in range(root.childCount()):
             act = root.child(i)
+            assert act is not None
             act_hierarchy = (act.text(0),)
             collect_expanded(act, act_hierarchy)
 
         return expanded
 
     def _restore_expanded_states(self, expanded_hierarchies):
-        """Restore all expanded/collapsed states."""
+        """Restore expanded/collapsed state previously captured by _save_expanded_states."""
         def restore_recursively(item, hierarchy=()):
+            data = item.data(0, Qt.ItemDataRole.UserRole) or {}
+            uuid_val = data.get("uuid")
+            key = ("uuid", uuid_val) if uuid_val else ("path", hierarchy)
+
             # Explicitly set expanded or collapsed
-            if hierarchy in expanded_hierarchies:
+            if key in expanded_hierarchies:
                 item.setExpanded(True)
             else:
                 item.setExpanded(False)
@@ -707,6 +786,7 @@ class ProjectTreeWidget(QWidget):
         root = self.tree.invisibleRootItem()
         for i in range(root.childCount()):
             act = root.child(i)
+            assert act is not None
             act_hierarchy = (act.text(0),)
             restore_recursively(act, act_hierarchy)
             
