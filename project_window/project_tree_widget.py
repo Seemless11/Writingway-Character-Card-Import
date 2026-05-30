@@ -47,13 +47,16 @@ class _DropIndicatorOverlay(QWidget):
 class ProjectTreeWidget(QWidget):
     """Left panel with the project structure tree."""
 
+    # Tree layout constants
+    _TREE_INDENTATION_PX = 10
+
     # Mapping of English status values to translated display values
     STATUS_MAP = {
         "To Do": pgettext("status", "To Do"),
         "In Progress": pgettext("status", "In Progress"),
         "Final Draft": pgettext("status", "Final Draft")
     }
-    
+
     # Reverse mapping for translating user selections back to English
     REVERSE_STATUS_MAP = {v: k for k, v in STATUS_MAP.items()}
     
@@ -93,7 +96,7 @@ class ProjectTreeWidget(QWidget):
 
         self.tree.setHeaderLabels([_("Name"), _("Status")])
         self.tree.setColumnCount(2)
-        self.tree.setIndentation(5)  # Reduced indentation for left-justified appearance
+        self.tree.setIndentation(self._TREE_INDENTATION_PX)
 
         header_item = self.tree.headerItem()
         assert header_item is not None
