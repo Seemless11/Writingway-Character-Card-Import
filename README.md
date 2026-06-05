@@ -1,3 +1,9 @@
+<img width="522" height="300" alt="Screenshot 2026-06-05 115123" src="https://github.com/user-attachments/assets/3db10566-a313-4971-8b27-9bb7cdda2e99" />
+<img width="454" height="300" alt="Screenshot 2026-06-05 115045" src="https://github.com/user-attachments/assets/4a434b0a-dc76-4693-82c8-6650faaac0b0" />
+<img width="488" height="300" alt="Screenshot 2026-06-05 115037" src="https://github.com/user-attachments/assets/ba947291-4af2-42ec-b0f8-abf1792556b2" />
+A simple import for Character Cards
+
+
 ![alt text](https://github.com/aomukai/Writingway/blob/main/assets/logo.png?raw=true "Logo")
 
 > # What is Writingway: An AI-Powered Creative Writing Companion
