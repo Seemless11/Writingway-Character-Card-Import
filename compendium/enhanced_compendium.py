@@ -33,6 +33,7 @@ from PyQt5.QtWidgets import (
 )
 
 from compendium.compendium_manager import CompendiumEventBus, CompendiumManager
+from compendium.import_dialog import SillyTavernImportDialog
 from settings.theme_manager import ThemeManager
 
 DEBUG = False
@@ -135,10 +136,45 @@ class EnhancedCompendiumWindow(QMainWindow):
         toolbar.addWidget(label)
         self.project_combo = QComboBox()
         toolbar.addWidget(self.project_combo)
+        
+        # Add spacer
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         toolbar.addWidget(spacer)
+        
+        # Add import button
+        self.import_button = QPushButton(_("📥 Import Character"))
+        self.import_button.setToolTip(_("Import a SillyTavern character (JSON or PNG)"))
+        self.import_button.clicked.connect(self.open_import_dialog)
+        toolbar.addWidget(self.import_button)
+        
         return toolbar
+
+    def open_import_dialog(self):
+        """Open the SillyTavern import dialog"""
+        dialog = SillyTavernImportDialog(self.project_name, self)
+        dialog.import_complete.connect(self.on_character_imported)
+        dialog.exec_()
+
+    def on_character_imported(self, character_name: str):
+        """
+        Handle successful character import.
+        
+        Args:
+            character_name: Name of the imported character
+        """
+        # Reload compendium to show new character
+        self.populate_compendium()
+        
+        # Try to select the newly imported character
+        self.find_and_select_entry(character_name)
+        
+        # Show success message
+        QMessageBox.information(
+            self,
+            _("Import Complete"),
+            _("Character '{}' has been imported and is now available in the compendium.").format(character_name)
+        )
 
     def populate_project_combo(self, project_name=None):
         """
