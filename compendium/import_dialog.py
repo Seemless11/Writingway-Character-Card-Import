@@ -15,7 +15,6 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QFileDialog,
     QMessageBox,
-    QProgressDialog,
     QComboBox,
     QFormLayout,
 )
