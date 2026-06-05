@@ -111,11 +111,11 @@ class SillyTavernImportDialog(QDialog):
 
     def browse_file(self):
         """Open file browser to select character file"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
+        file_path, _Filter = QFileDialog.getOpenFileName(
+            None,
             _("Select SillyTavern Character File"),
             "",
-            _("Character Files (*.json *.png);;JSON Files (*.json);;PNG Files (*.png);;All Files (*)")
+            "Character Files (*.json *.png);;JSON Files (*.json);;PNG Files (*.png);;All Files (*)"
         )
 
         if file_path:
